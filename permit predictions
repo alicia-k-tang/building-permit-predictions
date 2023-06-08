@@ -1,0 +1,136 @@
+#ADEC7340 Big Data Econometrics
+#Link to presentation: https://docs.google.com/presentation/d/1Ss4HbixT-QGb6kGDsU2raVeR0Jx61Bt4yYPQMo74_c0/edit?usp=sharing
+
+######################## Importing Data ###################################
+#importing data for Chicago building permits from this website: https://www.opendatanetwork.com/dataset/data.cityofchicago.org/ydr8-5enu 
+building <- read.csv("C:/Users/alice/Downloads/Building_Permits.csv")
+
+######################## Cleaning Data ###################################
+#next, we must take steps to clean the data before we begin working on it. 
+#first, to make things less overwhelming, i am choosing to remove all unnecessary columns in the data that i will not be using in my predictive model.
+#i will only be using these columns.
+library(dplyr)
+building <- select(building, c("ID", "PERMIT_TYPE", "REVIEW_TYPE", "APPLICATION_START_DATE", "PROCESSING_TIME", "ISSUE_DATE","TOTAL_FEE", "SUBTOTAL_WAIVED"))
+
+#removing rows with missing values and blanks
+#making all blank cells NA and only keeping complete cases
+#choosing to remove because this is a very large dataset.
+building[building==""] <- NA
+building <- building[complete.cases(building),]
+
+#checking to make sure all missing values and blank values are gone.
+#yep! they're gone.
+sum(is.na(building))
+
+#observing the faulty data types
+typeof(building$PERMIT_TYPE)
+
+#it says character but this variable should be a factor with 11 levels. 
+#converting it
+building$PERMIT_TYPE <- as.factor(building$PERMIT_TYPE)
+
+#doing the same for review type.
+building$REVIEW_TYPE <- as.factor(building$REVIEW_TYPE)
+
+#changing the format of dates in preferred format by month/day/year
+building$ISSUE_DATE <- as.Date(building$ISSUE_DATE, format="%m/%d/%Y")
+building$APPLICATION_START_DATE <- as.Date(building$APPLICATION_START_DATE, format="%m/%d/%Y")
+
+#converting processing time into numeric 
+building$PROCESSING_TIME <- as.numeric(as.character(building$PROCESSING_TIME))
+
+#checking our summary
+#as we can see, our summary for our data is a bit strange.
+summary(building)
+
+#getting rid of values below 0 that skew data because it's also confusing and more likely to be a misentry
+building <- building[-c(which(building$PROCESSING_TIME < 0)), ]
+building <- building[-c(which(building$TOTAL_FEE < 0)), ]
+
+######################## Data Examination ###################################
+#number of unique permits:
+length(unique(building$PERMIT_TYPE))
+
+#number of unique review types
+length(unique(building$REVIEW_TYPE))
+
+#distribution of records per permit, will be important for determining reference group later on 
+#we can see that the most were electric wiring
+table(building$PERMIT_TYPE)
+
+#distribution of records per review, will be important for determining reference group later on 
+#majority of review type was easy permit web
+table(building$REVIEW_TYPE)
+
+
+#graphical representation of length of time (days) from issue to completion by type of permit
+library(ggplot2)
+ggplot(building, aes(x=PERMIT_TYPE, y=PROCESSING_TIME, fill=PERMIT_TYPE))+geom_boxplot()+ylim(0,365)+ggtitle('Processing Time by Permit Type')
+
+#graphical representation of length of time (days) from issue to completion by type of review
+ggplot(building, aes(x=REVIEW_TYPE, y=PROCESSING_TIME, fill=REVIEW_TYPE))+geom_boxplot()+ylim(0,365)+ggtitle('Processing Time by Review Type')
+
+######################## Transforming Variables ###################################
+#making a new column for the year of the permit application and the year permit was issued in preparation for the model.
+building$application_year = substr(building$APPLICATION_START_DATE, 1,4)
+building$year_issue = substr(building$ISSUE_DATE, 1,4)
+
+#grouping the types of permits together to improve model, explained more in presentation 
+building$type_permit <- "OTHER"
+building$type_permit[building$PERMIT_TYPE == "PERMIT - ELECTRIC WIRING"] <- "ELECTRIC WIRING"
+building$type_permit[building$PERMIT_TYPE == "PERMIT - EASY PERMIT PROCESS"] <- "EASY PERMIT PROCESS"
+building$type_permit[building$PERMIT_TYPE == "PERMIT - RENOVATION/ALTERATION"] <- "RENOVATION/ALTERATION"
+building$type_permit[building$PERMIT_TYPE == "PERMIT - NEW CONSTRUCTION"] <- "NEW CONSTRUCTION"
+building$type_permit[building$PERMIT_TYPE == "PERMIT - WRECKING/DEMOLITION"] <- "WRECKING/DEMOLITION"
+building$type_permit[building$PERMIT_TYPE == "PERMIT - PORCH CONSTRUCTION"] <- "PORCH CONSTRUCTION"
+building$type_permit[building$PERMIT_TYPE == "PERMIT - SIGNS"] <- "SIGNS"
+building$type_permit[building$PERMIT_TYPE == "PERMIT - ELEVATOR EQUIPMENT"] <- "ELEVATOR EQUIPMENT"
+
+#grouping the types of reviews together to improve model 
+table(building$REVIEW_TYPE)
+building$type_review <- "OTHER"
+building$type_review[building$REVIEW_TYPE == "EASY PERMIT WEB"] <- "EASY PERMIT WEB"
+building$type_review[building$REVIEW_TYPE == "EASY PERMIT"] <- "EASY PERMIT"
+building$type_review[building$REVIEW_TYPE == "FIRE PROTECTION SYSTEM"] <- "FIRE PROTECTION SYSTEM"
+building$type_review[building$REVIEW_TYPE == "STANDARD PLAN REVIEW"] <- "STANDARD PLAN REVIEW"
+building$type_review[building$REVIEW_TYPE == "SELF CERT"] <- "SELF CERT"
+building$type_review[building$REVIEW_TYPE == "ELECTRICAL PLAN REVIEW"] <- "ELECTRICAL PLAN REVIEW"
+building$type_review[building$REVIEW_TYPE == "TRADITIONAL DEVELOPER SERVICES"] <- "TRADITIONAL DEVELOPER SERVICES"
+
+################# Data Partition #########################################
+#will be using random sampling for this assignment.
+library(caret)
+#setting seed to produce a reproducible random sampling
+#ask what value this should be set to
+set.seed(123)
+
+#creating training data as 70% of the dataset
+random_sample <- createDataPartition(building$PROCESSING_TIME, p = 0.7, list = FALSE)
+
+#generating training dataset from the random_sample 
+train <- building[random_sample, ]
+
+#generating testing dataset from rows not included in random_sample
+test <- building[-random_sample,]
+
+######################## Building a Linear Model ###################################
+#first, using this model to examine the p-values and significance.
+#from this, i used the results to help group permit and review types together to help improve my predictive model
+#for the reference group, there was no "normative" group. i decided to choose the largest category as the reference for both permit and review type. 
+
+#looking at the linear regression results with grouping types and using logs
+linearmodel <- lm((PROCESSING_TIME) ~ relevel(factor(type_permit), ref = "ELECTRIC WIRING") + relevel(factor(type_review), ref = "EASY PERMIT WEB")  + log1p(TOTAL_FEE) + log1p(SUBTOTAL_WAIVED) + application_year, data = train)
+summary(linearmodel)
+
+######################## Training the Model and Computing the Performance Metrics ###################################
+
+#training the model using linear regression
+model <- lm((PROCESSING_TIME) ~ relevel(factor(type_permit), ref = "ELECTRIC WIRING") + relevel(factor(type_review), ref = "EASY PERMIT WEB")  + log1p(TOTAL_FEE) + log1p(SUBTOTAL_WAIVED) + application_year, data = train)
+
+#predicting the target variable
+predictions <- predict(model, test)
+
+#computing model performance metrics
+data.frame(R2= R2(predictions, test$PROCESSING_TIME),
+           RMSE = RMSE(predictions, test$PROCESSING_TIME),
+           MAE = MAE(predictions, test$PROCESSING_TIME))
